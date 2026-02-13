@@ -44,7 +44,7 @@ connectDb()
   .then(() => ensureSuperAdmin())
   .then(() => {
     app.listen(port, () => {
-      console.log(`API running on http://172.17.7.236:${port}`);
+      console.log(`API running on port ${port}`);
     });
   })
   .catch((error) => {

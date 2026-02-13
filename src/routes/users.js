@@ -120,6 +120,7 @@ router.get('/admins', async (_req, res) => {
     `SELECT u.id, u.email, a.full_name, a.position, a.status
      FROM admins a
      JOIN users u ON u.id = a.user_id
+     WHERE u.role = 'admin'
      ORDER BY a.full_name ASC`,
   );
   return res.json(
@@ -179,7 +180,14 @@ router.post('/students', requireAuth, requireRole(['admin', 'super']), async (re
     return res.status(400).json({ message: 'Kurator topilmadi' });
   }
 
-  const adminCheck = await query('SELECT user_id FROM admins WHERE user_id = $1 LIMIT 1', [targetCuratorId]);
+  const adminCheck = await query(
+    `SELECT a.user_id
+     FROM admins a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.user_id = $1 AND u.role = 'admin'
+     LIMIT 1`,
+    [targetCuratorId],
+  );
   if (adminCheck.rowCount === 0) {
     return res.status(400).json({ message: 'Kurator topilmadi' });
   }

@@ -94,7 +94,14 @@ router.post('/register', async (req, res) => {
     return res.status(409).json({ message: 'Email mavjud' });
   }
 
-  const adminCheck = await query('SELECT user_id FROM admins WHERE user_id = $1 LIMIT 1', [curatorId]);
+  const adminCheck = await query(
+    `SELECT a.user_id
+     FROM admins a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.user_id = $1 AND u.role = 'admin'
+     LIMIT 1`,
+    [curatorId],
+  );
   if (adminCheck.rowCount === 0) {
     return res.status(400).json({ message: 'Kurator topilmadi' });
   }
