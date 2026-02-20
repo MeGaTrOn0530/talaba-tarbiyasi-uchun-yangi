@@ -146,6 +146,7 @@ async function initSchema() {
       student_id VARCHAR(36) NOT NULL,
       status VARCHAR(50) NOT NULL DEFAULT 'under_review',
       graded_score INT NULL,
+      points_applied INT NOT NULL DEFAULT 0,
       feedback TEXT NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -230,6 +231,147 @@ async function initSchema() {
   `);
 
   await query(`
+    CREATE TABLE IF NOT EXISTS student_points_ledger (
+      id VARCHAR(36) PRIMARY KEY,
+      student_id VARCHAR(36) NOT NULL,
+      source_type VARCHAR(50) NOT NULL,
+      source_id VARCHAR(36) NULL,
+      points INT NOT NULL,
+      note TEXT NULL,
+      created_by VARCHAR(36) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_points_student FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_points_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS student_badges (
+      id VARCHAR(36) PRIMARY KEY,
+      student_id VARCHAR(36) NOT NULL,
+      badge_code VARCHAR(100) NOT NULL,
+      badge_name VARCHAR(255) NOT NULL,
+      badge_icon VARCHAR(100) NULL,
+      badge_description TEXT NULL,
+      awarded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_student_badge (student_id, badge_code),
+      CONSTRAINT fk_badge_student FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS weekly_challenges (
+      id VARCHAR(36) PRIMARY KEY,
+      created_by VARCHAR(36) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      description TEXT NULL,
+      category VARCHAR(255) NULL,
+      mode VARCHAR(20) NOT NULL DEFAULT 'solo',
+      reward_text TEXT NULL,
+      bonus_points INT NOT NULL DEFAULT 0,
+      starts_at DATETIME NOT NULL,
+      ends_at DATETIME NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'active',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_weekly_challenge_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS weekly_challenge_entries (
+      id VARCHAR(36) PRIMARY KEY,
+      challenge_id VARCHAR(36) NOT NULL,
+      student_id VARCHAR(36) NOT NULL,
+      text TEXT NULL,
+      file_url TEXT NULL,
+      group_name VARCHAR(255) NULL,
+      opponent_student_id VARCHAR(36) NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'submitted',
+      score INT NULL,
+      rank_position INT NULL,
+      feedback TEXT NULL,
+      points_applied INT NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_challenge_student (challenge_id, student_id),
+      CONSTRAINT fk_challenge_entry_challenge FOREIGN KEY (challenge_id) REFERENCES weekly_challenges(id) ON DELETE CASCADE,
+      CONSTRAINT fk_challenge_entry_student FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_challenge_entry_opponent FOREIGN KEY (opponent_student_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS challenge_entry_likes (
+      id VARCHAR(36) PRIMARY KEY,
+      entry_id VARCHAR(36) NOT NULL,
+      user_id VARCHAR(36) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_challenge_entry_like (entry_id, user_id),
+      CONSTRAINT fk_challenge_like_entry FOREIGN KEY (entry_id) REFERENCES weekly_challenge_entries(id) ON DELETE CASCADE,
+      CONSTRAINT fk_challenge_like_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS challenge_entry_comments (
+      id VARCHAR(36) PRIMARY KEY,
+      entry_id VARCHAR(36) NOT NULL,
+      user_id VARCHAR(36) NOT NULL,
+      text TEXT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_challenge_comment_entry FOREIGN KEY (entry_id) REFERENCES weekly_challenge_entries(id) ON DELETE CASCADE,
+      CONSTRAINT fk_challenge_comment_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS certificates (
+      id VARCHAR(36) PRIMARY KEY,
+      student_id VARCHAR(36) NOT NULL,
+      challenge_id VARCHAR(36) NULL,
+      issued_by VARCHAR(36) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      rank_label VARCHAR(50) NULL,
+      award_type VARCHAR(50) NULL,
+      award_month_key VARCHAR(7) NULL,
+      award_rank INT NULL,
+      note TEXT NULL,
+      template_name VARCHAR(255) NULL,
+      template_url TEXT NULL,
+      pdf_url TEXT NULL,
+      issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_certificate_student FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_certificate_challenge FOREIGN KEY (challenge_id) REFERENCES weekly_challenges(id) ON DELETE SET NULL,
+      CONSTRAINT fk_certificate_issuer FOREIGN KEY (issued_by) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS monthly_leaderboard (
+      id VARCHAR(36) PRIMARY KEY,
+      month_key VARCHAR(7) NOT NULL,
+      student_id VARCHAR(36) NOT NULL,
+      rank_position INT NOT NULL,
+      score_value INT NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_month_rank (month_key, rank_position),
+      UNIQUE KEY uk_month_student (month_key, student_id),
+      CONSTRAINT fk_monthly_leaderboard_student FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS monthly_award_runs (
+      id VARCHAR(36) PRIMARY KEY,
+      month_key VARCHAR(7) NOT NULL UNIQUE,
+      status VARCHAR(20) NOT NULL DEFAULT 'processing',
+      message TEXT NULL,
+      processed_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
     CREATE TABLE IF NOT EXISTS analytics_snapshots (
       id VARCHAR(36) PRIMARY KEY,
       scope VARCHAR(255) NULL,
@@ -286,6 +428,20 @@ async function initSchema() {
   try { await query('CREATE INDEX idx_task_assignments_student_id ON task_assignments(student_id)'); } catch (_) {}
   try { await query('CREATE INDEX idx_events_curator_id ON events(curator_id)'); } catch (_) {}
   try { await query('CREATE INDEX idx_attendances_curator_date ON attendances(curator_id, date_key)'); } catch (_) {}
+  try { await query('ALTER TABLE task_assignments ADD COLUMN points_applied INT NOT NULL DEFAULT 0'); } catch (_) {}
+  try { await query('CREATE INDEX idx_points_ledger_student_date ON student_points_ledger(student_id, created_at)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_badges_student ON student_badges(student_id)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_weekly_challenges_dates ON weekly_challenges(starts_at, ends_at)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_challenge_entries_challenge ON weekly_challenge_entries(challenge_id)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_challenge_entries_student ON weekly_challenge_entries(student_id)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_challenge_comments_entry ON challenge_entry_comments(entry_id)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_certificates_student ON certificates(student_id, issued_at)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_certificates_award_month ON certificates(award_month_key, award_type, award_rank)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_monthly_leaderboard_month ON monthly_leaderboard(month_key, rank_position)'); } catch (_) {}
+  try { await query('CREATE INDEX idx_monthly_leaderboard_student ON monthly_leaderboard(student_id, month_key)'); } catch (_) {}
+  try { await query('ALTER TABLE certificates ADD COLUMN award_type VARCHAR(50) NULL'); } catch (_) {}
+  try { await query('ALTER TABLE certificates ADD COLUMN award_month_key VARCHAR(7) NULL'); } catch (_) {}
+  try { await query('ALTER TABLE certificates ADD COLUMN award_rank INT NULL'); } catch (_) {}
 }
 
 async function connectDb() {

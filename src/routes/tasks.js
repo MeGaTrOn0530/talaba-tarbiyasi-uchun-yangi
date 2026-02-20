@@ -3,6 +3,7 @@ const express = require('express');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { query, createId } = require('../db');
 const { isId } = require('../utils/sql');
+const { applyPoints, syncStudentGamification, toInt } = require('../services/engagement');
 
 const router = express.Router();
 const TASK_CATEGORIES = [
@@ -249,23 +250,120 @@ router.post('/:id/submissions', requireAuth, requireRole(['student']), async (re
   return res.json({ message: 'Yuborildi' });
 });
 
-router.patch('/assignments/:id/status', requireAuth, requireRole(['admin']), async (req, res) => {
-  const { status, gradedScore, feedback } = req.body || {};
+router.patch('/assignments/:id/status', requireAuth, requireRole(['admin', 'super']), async (req, res) => {
+  const body = req.body || {};
   if (!isId(req.params.id)) {
     return res.status(400).json({ message: 'Notogri ID' });
   }
 
+  const assignmentRes = await query(
+    `SELECT ta.id,
+            ta.student_id,
+            ta.status,
+            ta.graded_score,
+            ta.points_applied,
+            t.id AS task_id,
+            t.title AS task_title,
+            t.curator_id
+     FROM task_assignments ta
+     INNER JOIN tasks t ON t.id = ta.task_id
+     WHERE ta.id = $1
+     LIMIT 1`,
+    [req.params.id],
+  );
+  if (assignmentRes.rowCount === 0) {
+    return res.status(404).json({ message: 'Topshiriq birikmasi topilmadi' });
+  }
+
+  const assignment = assignmentRes.rows[0];
+  if (req.user.role === 'admin' && assignment.curator_id !== req.user.id) {
+    return res.status(403).json({ message: 'Ruxsat yoq' });
+  }
+
+  const hasStatus = Object.prototype.hasOwnProperty.call(body, 'status');
+  const hasScore = Object.prototype.hasOwnProperty.call(body, 'gradedScore');
+  const hasFeedback = Object.prototype.hasOwnProperty.call(body, 'feedback');
+
+  let nextStatus = String(assignment.status || '').toLowerCase();
+  if (hasStatus) {
+    const candidate = String(body.status || '').toLowerCase();
+    if (candidate && !['under_review', 'graded', 'rejected', 'submitted', 'approved', 'not_submitted'].includes(candidate)) {
+      return res.status(400).json({ message: 'Status notogri' });
+    }
+    if (candidate) {
+      nextStatus = candidate;
+    }
+  }
+
+  let parsedScore = null;
+  if (hasScore) {
+    if (body.gradedScore === null || body.gradedScore === '') {
+      parsedScore = null;
+    } else {
+      const score = Number(body.gradedScore);
+      if (!Number.isFinite(score) || score < 0 || score > 10) {
+        return res.status(400).json({ message: 'Baho 0 dan 10 gacha bolishi kerak' });
+      }
+      parsedScore = Math.trunc(score);
+      if (!hasStatus) {
+        nextStatus = 'graded';
+      }
+    }
+  }
+
+  const previousApplied = toInt(assignment.points_applied, 0);
+  let nextApplied = previousApplied;
+  if (hasScore) {
+    nextApplied = parsedScore === null ? 0 : parsedScore;
+  } else if (nextStatus === 'rejected') {
+    nextApplied = 0;
+  }
+
+  const updateFields = [];
+  const params = [req.params.id];
+  let index = 2;
+
+  if (hasStatus || (hasScore && parsedScore !== null)) {
+    updateFields.push(`status = $${index}`);
+    params.push(nextStatus);
+    index += 1;
+  }
+  if (hasScore) {
+    updateFields.push(`graded_score = $${index}`);
+    params.push(parsedScore);
+    index += 1;
+  }
+  if (hasFeedback) {
+    updateFields.push(`feedback = $${index}`);
+    params.push(body.feedback ? String(body.feedback).trim() : null);
+    index += 1;
+  }
+  updateFields.push(`points_applied = $${index}`);
+  params.push(nextApplied);
+  updateFields.push('updated_at = NOW()');
+
   await query(
     `UPDATE task_assignments
-     SET status = COALESCE($2, status),
-         graded_score = COALESCE($3, graded_score),
-         feedback = COALESCE($4, feedback),
-         updated_at = NOW()
+     SET ${updateFields.join(', ')}
      WHERE id = $1`,
-    [req.params.id, status ?? null, gradedScore ?? null, feedback ?? null],
+    params,
   );
 
-  return res.json({ message: 'Holat yangilandi' });
+  const delta = nextApplied - previousApplied;
+  if (delta !== 0) {
+    await applyPoints({
+      studentId: assignment.student_id,
+      points: delta,
+      sourceType: 'task_grade',
+      sourceId: assignment.id,
+      note: `${assignment.task_title || 'Topshiriq'} bo'yicha baholash`,
+      createdBy: req.user.id,
+    });
+  } else {
+    await syncStudentGamification(assignment.student_id);
+  }
+
+  return res.json({ message: 'Holat yangilandi', delta });
 });
 
 module.exports = router;
